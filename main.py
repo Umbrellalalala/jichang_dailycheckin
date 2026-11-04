@@ -64,7 +64,9 @@ def main():
                 data={"email": email, "passwd": password}, timeout=(15, 30),
             ), "登录")
             if str(login.get("ret")) != "1":
-                raise RuntimeError("登录接口未确认登录成功")
+                reason = str(login.get("msg") or login.get("message") or "未提供原因")
+                reason = reason.replace(email, "[email]").replace(password, "[redacted]")
+                raise RuntimeError(f"登录未成功：{reason[:120]}")
 
             check_headers = {
                 "accept": "application/json, text/javascript, */*; q=0.01",
