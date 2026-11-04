@@ -2,7 +2,7 @@ import os
 import sys
 import requests
 
-BASE_URL = "https://ikuuu.eu"
+BASE_URL = "https://ikuuu.top"
 EMAILS = [item.strip() for item in os.environ.get("EMAIL", "").split(",") if item.strip()]
 PASSWORDS = [item.strip() for item in os.environ.get("PASSWD", "").split(",")]
 SCKEY = os.environ.get("SCKEY", "")
