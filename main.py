@@ -1,18 +1,13 @@
 import os
 import sys
+from urllib.parse import urlparse
+
 import requests
 
-BASE_URL = "https://ikuuu.top"
-EMAILS = [item.strip() for item in os.environ.get("EMAIL", "").split(",") if item.strip()]
-PASSWORDS = [item.strip() for item in os.environ.get("PASSWD", "").split(",")]
-SCKEY = os.environ.get("SCKEY", "")
-TOKEN = os.environ.get("TOKEN", "")
-
-HEADERS = {
-    "origin": BASE_URL,
-    "referer": f"{BASE_URL}/auth/login",
-    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
-}
+BASE_URL = os.environ.get("IKUUU_BASE_URL", "").strip().rstrip("/")
+COOKIES = [value.strip() for value in os.environ.get("IKUUU_COOKIE", "").split("||") if value.strip()]
+SCKEY = os.environ.get("SCKEY", "").strip()
+TOKEN = os.environ.get("TOKEN", "").strip()
 
 
 def response_json(response, step):
@@ -27,13 +22,14 @@ def response_json(response, step):
 
 
 def notify(message):
+    """Optional push notifications only; this script has no email sender."""
     try:
         if SCKEY and SCKEY != "1":
             requests.post(
                 f"https://sctapi.ftqq.com/{SCKEY}.send",
                 params={"title": "ikuuu签到", "desp": message}, timeout=15,
             ).raise_for_status()
-            print("通知已发送")
+            print("签到推送已发送")
         elif TOKEN and TOKEN != "1":
             response = requests.post(
                 "https://www.pushplus.plus/send",
@@ -41,42 +37,45 @@ def notify(message):
                 timeout=15,
             )
             response.raise_for_status()
-            print("通知已发送")
-        else:
-            print("未配置签到通知")
+            print("签到推送已发送")
     except Exception as exc:
-        # 通知失败不能改变签到本身的结果。
-        print(f"通知发送失败（{type(exc).__name__}）")
+        print(f"签到推送失败（{type(exc).__name__}）")
 
 
 def main():
-    if not EMAILS or len(EMAILS) != len(PASSWORDS):
-        print("签到凭据未配置完整：请检查 EMAIL 和 PASSWD Secrets。")
+    if not COOKIES:
+        print("未配置 IKUUU_COOKIE，请从官网登录后复制 Cookie 并保存到仓库 Secrets。")
+        return 1
+    parsed = urlparse(BASE_URL)
+    if parsed.scheme != "https" or not parsed.netloc:
+        print("未配置有效的 IKUUU_BASE_URL；请填写获取 Cookie 时使用的 https 官网地址。")
         return 1
 
     failures = []
-    for index, (email, password) in enumerate(zip(EMAILS, PASSWORDS), start=1):
-        session = requests.Session()
-        session.headers.update(HEADERS)
+    for index, cookie in enumerate(COOKIES, start=1):
         try:
-            login = response_json(session.post(
-                f"{BASE_URL}/auth/login",
-                data={"email": email, "passwd": password}, timeout=(15, 30),
-            ), "登录")
-            if str(login.get("ret")) != "1":
-                reason = str(login.get("msg") or login.get("message") or "未提供原因")
-                reason = reason.replace(email, "[email]").replace(password, "[redacted]")
-                raise RuntimeError(f"登录未成功：{reason[:120]}")
+            response = requests.post(
+                f"{BASE_URL}/user/checkin",
+                headers={
+                    "Cookie": cookie,
+                    "Origin": BASE_URL,
+                    "Referer": f"{BASE_URL}/user",
+                    "Accept": "application/json, text/javascript, */*; q=0.01",
+                    "X-Requested-With": "XMLHttpRequest",
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/132.0.0.0 Safari/537.36"
+                    ),
+                },
+                timeout=(15, 30),
+            )
+            if response.url.rstrip("/").endswith("/auth/login"):
+                raise RuntimeError("Cookie已失效，或官网地址与该Cookie不匹配")
 
-            check_headers = {
-                "accept": "application/json, text/javascript, */*; q=0.01",
-                "x-requested-with": "XMLHttpRequest",
-            }
-            result = response_json(session.post(
-                f"{BASE_URL}/user/checkin", headers=check_headers, timeout=(15, 30),
-            ), "签到")
+            result = response_json(response, "签到")
             ret = str(result.get("ret"))
-            message = str(result.get("msg") or "签到接口未返回说明")
+            message = str(result.get("msg") or result.get("message") or "签到接口未返回说明")
             already_done = ret == "0" and any(
                 word in message.lower() for word in ("已签到", "签到过", "already")
             )
@@ -84,17 +83,17 @@ def main():
                 raise RuntimeError(f"签到接口未确认成功：{message[:160]}")
 
             state = "今日已签到" if already_done else "签到成功"
-            print(f"账号 {index}：{state}。{message}")
-            notify(f"账号 {index}：{state}。{message}")
+            summary = f"账号 {index}：{state}。{message}"
+            print(summary)
+            notify(summary)
         except Exception as exc:
-            # 不打印账号、密码、Cookie、响应正文或请求 URL。
             print(f"账号 {index}：签到失败（{type(exc).__name__}: {str(exc)[:180]}）")
             failures.append(index)
 
     if failures:
         print(f"失败账号数：{len(failures)}")
         return 1
-    print(f"全部账号处理完成：{len(EMAILS)} 个。")
+    print(f"全部账号处理完成：{len(COOKIES)} 个。")
     return 0
 
 
